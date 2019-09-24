@@ -1,0 +1,4 @@
+[submodule "wrk"]
+	path = wrk
+	url = https://github.com/jirkamarsik/wrk
+	branch = live-latency-reports
