@@ -1,0 +1,34 @@
+name:                charting
+version:             0.1.0.0
+github:              "jirkamarsik/talkyard-benchmarking"
+license:             BSD3
+author:              "Jirka Marsik"
+maintainer:          "jiri.marsik89@gmail.com"
+copyright:           "Copyright (C) 2019-2019 Jiri Marsik"
+
+
+# Metadata used when publishing your package
+# synopsis:            Short description of your package
+# category:            Web
+
+# To avoid duplicated efforts in documentation and dealing with the
+# complications of embedding Haddock markup inside cabal files, it is
+# common to point users to the README.md file.
+description:         Code to render graphs from collected Talkyard benchmark data.
+
+dependencies:
+- base >= 4.7 && < 5
+- Chart >= 1.9 && < 2
+- Chart-diagrams >= 1.9 && < 2
+- cassava >= 0.5 && < 1
+- bytestring >= 0.10 && < 1
+- vector >= 0.12 && < 1
+- either >= 5.0 && < 6
+
+executable:
+  main:                Main.hs
+  source-dirs: src
+  ghc-options:
+  - -threaded
+  - -rtsopts
+  - -with-rtsopts=-N
