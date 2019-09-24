@@ -1,0 +1,313 @@
+diff --git a/app/debiki/Nashorn.scala b/app/debiki/Nashorn.scala
+index 13f9f2eb4..bdc2604a7 100644
+--- a/app/debiki/Nashorn.scala
++++ b/app/debiki/Nashorn.scala
+@@ -22,8 +22,7 @@ import java.io.{BufferedWriter, FileWriter}
+ import com.debiki.core._
+ import com.debiki.core.Prelude._
+ import java.{io => jio}
+-
+-import javax.{script => js}
++import org.graalvm.{polyglot => graalvm}
+ import debiki.onebox.{InstantOneboxRendererForNashorn, Onebox}
+ import org.apache.lucene.util.IOUtils
+ import play.api.Play
+@@ -31,7 +30,6 @@ import play.api.Play
+ import scala.concurrent.Future
+ import scala.util.Try
+ import Nashorn._
+-import jdk.nashorn.api.scripting.ScriptObjectMirror
+ import org.scalactic.{Bad, ErrorMessage, Good, Or}
+ 
+ import scala.collection.mutable.ArrayBuffer
+@@ -62,14 +60,9 @@ class Nashorn(globals: Globals) {
+ 
+   /** The Nashorn Javascript engine isn't thread safe.  */
+   private val javascriptEngines =
+-    new java.util.concurrent.LinkedBlockingDeque[js.ScriptEngine](999)
++    new java.util.concurrent.LinkedBlockingDeque[Option[graalvm.Context]](999)
+ 
+-  private val BrokenEngine = new js.AbstractScriptEngine() {
+-    override def eval(script: String, context: js.ScriptContext): AnyRef = null
+-    override def eval(reader: jio.Reader, context: js.ScriptContext): AnyRef = null
+-    override def getFactory: js.ScriptEngineFactory = null
+-    override def createBindings(): js.Bindings = null
+-  }
++  private val BrokenEngine = None
+ 
+   @volatile private var firstCreateEngineError: Option[Throwable] = None
+ 
+@@ -180,7 +173,7 @@ class Nashorn(globals: Globals) {
+         }
+         return
+     }
+-    javascriptEngines.putLast(engine)
++    javascriptEngines.putLast(Some(engine))
+   }
+ 
+ 
+@@ -193,12 +186,13 @@ class Nashorn(globals: Globals) {
+   }
+ 
+ 
+-  private def renderPageImpl[R](engine: js.Invocable, reactStoreJsonString: String)
++  private def renderPageImpl[R](engine: graalvm.Context, reactStoreJsonString: String)
+         : String Or ErrorMessage = {
+     val timeBefore = System.nanoTime()
+ 
+-    val htmlOrError = engine.invokeFunction(
+-      "renderReactServerSide", reactStoreJsonString, cdnOrigin.getOrElse("")).asInstanceOf[String]
++
++    val htmlOrError = engine.getBindings("js").getMember("renderReactServerSide")
++      .execute(reactStoreJsonString, cdnOrigin.getOrElse("")).asString
+     if (htmlOrError.startsWith(ErrorRenderingReact)) {
+       logger.error(s"Error rendering page with React server side [DwE5KGW2]")
+       return Bad(htmlOrError)
+@@ -232,44 +226,41 @@ class Nashorn(globals: Globals) {
+       // The onebox renderer needs a Javascript engine to sanitize html (via Caja JsHtmlSanitizer)
+       // and we'll reuse `engine` so we won't have to create any additional engine.
+       oneboxRenderer.javascriptEngine = Some(engine)
+-      val resultObj: Object = engine.invokeFunction("renderAndSanitizeCommonMark", commonMarkSource,
++      val result: graalvm.Value = engine.getBindings("js").getMember("renderAndSanitizeCommonMark").execute(
++          commonMarkSource,
+           true.asInstanceOf[Object], // allowClassIdDataAttrs.asInstanceOf[Object],
+           followLinks.asInstanceOf[Object],
+-          oneboxRenderer, uploadsUrlPrefix)
++          oneboxRenderer,
++          uploadsUrlPrefix)
+       oneboxRenderer.javascriptEngine = None
+ 
+-      val result: ScriptObjectMirror = resultObj match {
+-        case scriptObjectMirror: ScriptObjectMirror =>
+-          scriptObjectMirror
+-        case errorDetails: ErrorMessage =>
+-          // Don't use Die — the stack trace to here isn't interesting? Instead, it's the
+-          // errorDetails from the inside-Nashorn exception that matters.
+-          debiki.EdHttp.throwInternalError(
+-            "TyERCMEX", "Error rendering CommonMark, server side in Nashorn", errorDetails)
+-        case unknown =>
+-          die("TyERCMR01", s"Bad class: ${classNameOf(unknown)}, thing as string: ``$unknown''")
++      if (result.isString) {
++        // Don't use Die — the stack trace to here isn't interesting? Instead, it's the
++        // errorDetails from the inside-Nashorn exception that matters.
++        debiki.EdHttp.throwInternalError(
++          "TyERCMEX", "Error rendering CommonMark, server side in Nashorn", result.asString)
++      } else if (!result.hasMembers) {
++        die("TyERCMR01", s"Bad class: ${classNameOf(result)}, thing as string: ``$result''")
+       }
+ 
+-      dieIf(!result.isArray, "TyERCMR02", "Not an array")
+-      dieIf(!result.hasSlot(0), "TyERCMR03A", "No slot 0")
+-      dieIf(!result.hasSlot(1), "TyERCMR03B", "No slot 1")
+-      dieIf(result.hasSlot(2), "TyERCMR03C", "Has slot 2")
++      dieIf(!result.hasArrayElements, "TyERCMR02", "Not an array")
++      dieIf(result.getArraySize != 2, "TyERCMR03D", "Array of size != 2")
+ 
+-      val elem0 = result.getSlot(0)
+-      dieIf(!elem0.isInstanceOf[String], "TyERCMR04", s"Bad safeHtml class: ${classNameOf(elem0)}")
+-      val safeHtml = elem0.asInstanceOf[String]
++      val elem0 = result.getArrayElement(0)
++      dieIf(!elem0.isString, "TyERCMR04", s"Bad safeHtml class: ${classNameOf(elem0)}")
++      val safeHtml = elem0.asString
+ 
+-      val elem1 = result.getSlot(1)
+-      dieIf(!elem1.isInstanceOf[ScriptObjectMirror],
++      val elem1 = result.getArrayElement(1)
++      dieIf(!elem1.hasArrayElements,
+           "TyERCMR05", s"Bad mentionsArray class: ${classNameOf(elem1)}")
+-      val mentionsArrayMirror = elem1.asInstanceOf[ScriptObjectMirror]
++      val mentionsArrayMirror = elem1
+ 
+       val mentions = ArrayBuffer[String]()
+       var nextSlotIx = 0
+-      while (mentionsArrayMirror.hasSlot(nextSlotIx)) {
+-        val elem = mentionsArrayMirror.getSlot(nextSlotIx)
+-        dieIf(!elem.isInstanceOf[String], "TyERCMR06", s"Bad mention class: ${classNameOf(elem)}")
+-        mentions.append(elem.asInstanceOf[String])
++      while (nextSlotIx < mentionsArrayMirror.getArraySize) {
++        val elem = mentionsArrayMirror.getArrayElement(nextSlotIx)
++        dieIf(!elem.isString, "TyERCMR06", s"Bad mention class: ${classNameOf(elem)}")
++        mentions.append(elem.asString)
+         nextSlotIx += 1
+       }
+ 
+@@ -289,13 +280,13 @@ class Nashorn(globals: Globals) {
+ 
+ 
+   def sanitizeHtmlReuseEngine(text: String, followLinks: Boolean,
+-        javascriptEngine: Option[js.Invocable]): String = {
++        javascriptEngine: Option[graalvm.Context]): String = {
+     if (isTestSoDisableScripts)
+       return "Scripts disabled [EsM44GY0]"
+-    def sanitizeWith(engine: js.Invocable): String = {
+-      val safeHtml = engine.invokeFunction(
+-          "sanitizeHtmlServerSide", text, followLinks.asInstanceOf[Object])
+-      safeHtml.asInstanceOf[String]
++    def sanitizeWith(engine: graalvm.Context): String = {
++      val safeHtml = engine.getBindings("js").getMember("sanitizeHtmlServerSide")
++        .execute(text, followLinks.asInstanceOf[Object])
++      safeHtml.asString
+     }
+     javascriptEngine match {
+       case Some(engine) =>
+@@ -312,13 +303,13 @@ class Nashorn(globals: Globals) {
+     if (isTestSoDisableScripts)
+       return "scripts-disabled-EsM28WXP45"
+     withJavascriptEngine(engine => {
+-      val slug = engine.invokeFunction("debikiSlugify", title)
+-      slug.asInstanceOf[String]
++      val slug = engine.getBindings("js").getMember("debikiSlugify").execute(title)
++      slug.asString
+     })
+   }
+ 
+ 
+-  private def withJavascriptEngine[R](fn: (js.Invocable) => R): R = {
++  private def withJavascriptEngine[R](fn: (graalvm.Context) => R): R = {
+     dieIf(isTestSoDisableScripts, "EsE4YUGw")
+ 
+     def threadId = Thread.currentThread.getId
+@@ -337,29 +328,32 @@ class Nashorn(globals: Globals) {
+       // Don't: Future { createOneMoreJavascriptEngine() }
+     }
+ 
+-    val engine = javascriptEngines.takeFirst()
++    val maybeEngine = javascriptEngines.takeFirst()
+ 
+     if (mightBlock) {
+       logger.debug(s"...Thread $threadName (id $threadId) got a JS engine.")
+-      if (engine eq BrokenEngine) {
++      if (maybeEngine eq BrokenEngine) {
+         logger.debug(s"...But it is broken; I'll throw an error. [DwE4KEWV52]")
+       }
+     }
+ 
+-    if (engine eq BrokenEngine) {
+-      javascriptEngines.addFirst(engine)
+-      die("DwE5KGF8", "Could not create Javascript engine; cannot render page",
+-        firstCreateEngineError getOrDie "DwE4KEW20")
+-    }
+-
+-    try fn(engine.asInstanceOf[js.Invocable])
+-    finally {
+-      javascriptEngines.addFirst(engine)
++    maybeEngine match {
++      case Some(engine) => {
++        try fn(engine)
++        finally {
++          javascriptEngines.addFirst(maybeEngine)
++        }
++      }
++      case None => {
++        javascriptEngines.addFirst(maybeEngine)
++        die("DwE5KGF8", "Could not create Javascript engine; cannot render page",
++          firstCreateEngineError getOrDie "DwE4KEW20")
++      }
+     }
+   }
+ 
+ 
+-  private def makeJavascriptEngine(): js.ScriptEngine = {
++  private def makeJavascriptEngine(): graalvm.Context = {
+     val timeBefore = System.currentTimeMillis()
+     def threadId = java.lang.Thread.currentThread.getId
+     def threadName = java.lang.Thread.currentThread.getName
+@@ -370,7 +364,7 @@ class Nashorn(globals: Globals) {
+     // Pass 'null' so that a class loader that finds the Nashorn extension will be used.
+     // Otherwise the Nashorn engine won't be found and `newEngine` will be null.
+     // See: https://github.com/playframework/playframework/issues/2532
+-    val newEngine = new js.ScriptEngineManager(null).getEngineByName("nashorn")
++    val newEngine = graalvm.Context.newBuilder("js").allowAllAccess(true).build
+     val scriptBuilder = new StringBuilder
+ 
+     scriptBuilder.append(i"""
+@@ -502,7 +496,8 @@ class Nashorn(globals: Globals) {
+       }
+     }
+ 
+-    newEngine.eval(script)
++    val scriptSource = graalvm.Source.newBuilder("js", script, "setup").buildLiteral
++    newEngine.eval(scriptSource)
+ 
+     def timeElapsed = System.currentTimeMillis() - timeBefore
+     logger.debug(o"""... Done initializing Nashorn engine, took: $timeElapsed ms,
+@@ -534,13 +529,13 @@ class Nashorn(globals: Globals) {
+   }
+ 
+ 
+-  private def warmupJavascriptEngine(engine: js.ScriptEngine) {
++  private def warmupJavascriptEngine(engine: graalvm.Context) {
+     logger.debug(o"""Warming up Nashorn engine...""")
+     val timeBefore = System.currentTimeMillis()
+     // Warming up with three laps seems enough, almost all time is spent in at lap 1.
+     for (i <- 1 to 3) {
+       val timeBefore = System.currentTimeMillis()
+-      renderPageImpl(engine.asInstanceOf[js.Invocable], WarmUpReactStoreJsonString)
++      renderPageImpl(engine, WarmUpReactStoreJsonString)
+       def timeElapsed = System.currentTimeMillis() - timeBefore
+       logger.info(o"""Warming up Nashorn engine, lap $i done, took: $timeElapsed ms""")
+     }
+diff --git a/app/debiki/onebox/Onebox.scala b/app/debiki/onebox/Onebox.scala
+index 77d200d08..355aaf48e 100644
+--- a/app/debiki/onebox/Onebox.scala
++++ b/app/debiki/onebox/Onebox.scala
+@@ -21,7 +21,7 @@ import com.debiki.core._
+ import com.debiki.core.Prelude._
+ import debiki.{Globals, Nashorn}
+ import debiki.onebox.engines._
+-import javax.{script => js}
++import org.graalvm.{polyglot => graalvm}
+ import scala.collection.mutable
+ import scala.collection.mutable.ArrayBuffer
+ import scala.concurrent.{ExecutionContext, Future}
+@@ -78,7 +78,7 @@ abstract class OneboxEngine(globals: Globals, val nashorn: Nashorn) {
+     uploadsLinkRegex.replaceAllIn(safeHtml, s"""="$prefix$$1"""")
+   }
+ 
+-  final def loadRenderSanitize(url: String, javascriptEngine: Option[js.Invocable])
++  final def loadRenderSanitize(url: String, javascriptEngine: Option[graalvm.Context])
+         : Future[String] = {
+     def sanitizeAndWrap(html: String): String = {
+       var safeHtml =
+@@ -157,7 +157,7 @@ class Onebox(val globals: Globals, val nashorn: Nashorn) {
+     new GiphyOnebox(globals, nashorn),
+     new YouTubeOnebox(globals, nashorn))
+ 
+-  def loadRenderSanitize(url: String, javascriptEngine: Option[js.Invocable])
++  def loadRenderSanitize(url: String, javascriptEngine: Option[graalvm.Context])
+         : Future[String] = {
+     for (engine <- engines) {
+       if (engine.handles(url))
+@@ -167,7 +167,7 @@ class Onebox(val globals: Globals, val nashorn: Nashorn) {
+   }
+ 
+ 
+-  def loadRenderSanitizeInstantly(url: String, javascriptEngine: Option[js.Invocable])
++  def loadRenderSanitizeInstantly(url: String, javascriptEngine: Option[graalvm.Context])
+         : RenderOnboxResult = {
+     def placeholder = PlaceholderPrefix + nextRandomString()
+ 
+@@ -203,7 +203,7 @@ class InstantOneboxRendererForNashorn(val oneboxes: Onebox) {
+   // Should be set to the Nashorn engine that calls this class, so that we can call
+   // back out to the same engine, when sanitizing html, so we won't have to ask for
+   // another engine, that'd create unnecessarily many engines.
+-  var javascriptEngine: Option[js.Invocable] = None
++  var javascriptEngine: Option[graalvm.Context] = None
+ 
+   def renderAndSanitizeOnebox(unsafeUrl: String): String = {
+     lazy val safeUrl = org.owasp.encoder.Encode.forHtml(unsafeUrl)
+diff --git a/build.sbt b/build.sbt
+index b89afa57f..edd2f1840 100644
+--- a/build.sbt
++++ b/build.sbt
+@@ -97,7 +97,9 @@ val appDependencies = Seq(
+   // CLEAN_UP remove Spec2 use only ScalaTest, need to edit some tests.
+   "org.mockito" % "mockito-all" % "1.9.0" % "test", // I use Mockito with Specs2...
+   "org.scalatest" %% "scalatest" % "3.0.5" % "test", // but prefer ScalaTest
+-  "org.scalatestplus.play" %% "scalatestplus-play" % "3.1.2" % Test)
++  "org.scalatestplus.play" %% "scalatestplus-play" % "3.1.2" % Test,
++  // GraalVM SDK for GraalVM JavaScript integration
++  "org.graalvm.sdk" % "graal-sdk" % "19.0.0")
+ 
+ 
+ val main = (project in file("."))

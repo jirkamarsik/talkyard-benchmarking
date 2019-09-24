@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+
+set -xe
+
+SITE=$1
+OUTDIR=$2
+
+function runConfiguration {
+    NAME=`echo warmup "$@" | sed -e 's/\.\.\///' -e 's/.patch//' | tr ' ' '-'`
+
+    make dead
+    git reset --hard
+    git checkout benchmarking
+    if [ $# -gt 0 ]; then
+        git apply $@
+    fi
+    s/d build app
+    s/d -f docker-compose.yml -f docker-compose-no-limits.yml up -d
+
+    while ! curl --fail --max-time 5 http://localhost; do
+        sleep 10
+    done
+
+    ../wait-until-idle
+
+    ../wrk/wrk --connections `nproc` --duration 30m --threads 1 --script ../collect-live-latency.lua $SITE
+    cp latencies1.csv $OUTDIR/$NAME
+    cp js-latencies.csv $OUTDIR/js-$NAME
+}
+
+sysctl -p ../sysctl.conf
+
+mkdir -p $OUTDIR
+runConfiguration
+runConfiguration ../graalvmce.patch ../graaljs.patch
