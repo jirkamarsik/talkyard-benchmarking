@@ -1,8 +1,8 @@
 diff --git a/images/app/Dockerfile.dev b/images/app/Dockerfile.dev
-index 43a7be0b4..cb9f2fd78 100644
+index 43a7be0b4..e905c9ee6 100644
 --- a/images/app/Dockerfile.dev
 +++ b/images/app/Dockerfile.dev
-@@ -9,19 +9,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
+@@ -9,19 +9,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
    # Telnet, nice for troubleshooting SMTP problems for example.
    busybox
  
@@ -12,12 +12,11 @@ index 43a7be0b4..cb9f2fd78 100644
 -ENV JVM_TARFILE OpenJDK8U-jdk_x64_linux_hotspot_$JVM_URL_VERSION.tar.gz
 -ENV JVM_URL https://github.com/AdoptOpenJDK/openjdk8-binaries/releases/download/jdk$JVM_VERSION/$JVM_TARFILE
 +# Instead of using OpenJDK, pull in GraalVM.
-+ENV GRAALVM_VERSION 19.0.0
-+ENV GRAALVM_TARFILE graalvm-ce-linux-amd64-$GRAALVM_VERSION.tar.gz
-+ENV GRAALVM_URL https://github.com/oracle/graal/releases/download/vm-$GRAALVM_VERSION/$GRAALVM_TARFILE
++ENV GRAALVM_VERSION 19.3.0-dev
++ENV GRAALVM_TARFILE graalvm-ce-java8-linux-amd64-$GRAALVM_VERSION.tar.gz
  
 -RUN curl -L $JVM_URL > /tmp/$JVM_TARFILE
-+RUN curl -L $GRAALVM_URL > /tmp/$GRAALVM_TARFILE
++COPY $GRAALVM_TARFILE /tmp/$GRAALVM_TARFILE
  
  RUN mkdir -p /opt && \
 -    tar -C /opt -xzf /tmp/$JVM_TARFILE && \
@@ -26,7 +25,7 @@ index 43a7be0b4..cb9f2fd78 100644
 +    rm -f /tmp/$GRAALVM_TARFILE
  
 -ENV JAVA_HOME /opt/jdk$JVM_VERSION
-+ENV JAVA_HOME /opt/graalvm-ce-$GRAALVM_VERSION
++ENV JAVA_HOME /opt/graalvm-ce-java8-$GRAALVM_VERSION
  ENV PATH $JAVA_HOME/bin:$PATH
  # Store the new PATH in /etc/environment, so that it is not overriden by /etc/profile.
  RUN echo "PATH=$PATH" >> /etc/environment

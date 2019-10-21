@@ -6,7 +6,7 @@ SITE=$1
 OUTDIR=$2
 
 function runConfiguration {
-    NAME=`echo warmup "$@" | sed -e 's/\.\.\///' -e 's/.patch//' | tr ' ' '-'`
+    NAME=`echo warmup "$@" | sed -e 's/\.\.\///g' -e 's/.patch//g' | tr ' ' '-'`
 
     make dead
     git reset --hard
@@ -33,3 +33,4 @@ sysctl -p ../sysctl.conf
 mkdir -p $OUTDIR
 runConfiguration
 runConfiguration ../graalvmce.patch ../graaljs.patch
+runConfiguration ../graalvmee.patch ../graaljs.patch

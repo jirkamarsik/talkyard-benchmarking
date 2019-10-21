@@ -60,7 +60,8 @@ dataForEngine fileName = normalizeTime <$> parseData <$> BS.readFile fileName
 
 dataPaths :: String -> [(String, FilePath)]
 dataPaths prefix = [ ("OpenJDK + Nashorn", prefix ++ "warmup")
-                   , ("GraalVM + GraalVM JavaScript", prefix ++ "warmup-graalvmce-graaljs")
+                   , ("GraalVM CE + GraalVM JavaScript", prefix ++ "warmup-graalvmce-graaljs")
+                   , ("GraalVM EE + GraalVM JavaScript", prefix ++ "warmup-graalvmee-graaljs")
                    ]
 
 main :: IO ()

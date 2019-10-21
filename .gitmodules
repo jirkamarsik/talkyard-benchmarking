@@ -2,7 +2,3 @@
 	path = wrk
 	url = https://github.com/jirkamarsik/wrk
 	branch = live-latency-reports
-[submodule "talkyard"]
-	path = talkyard
-	url = https://github.com/jirkamarsik/talkyard
-	branch = benchmarking
