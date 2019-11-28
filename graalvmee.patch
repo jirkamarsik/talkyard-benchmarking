@@ -13,7 +13,7 @@ index 43a7be0b4..e905c9ee6 100644
 -ENV JVM_URL https://github.com/AdoptOpenJDK/openjdk8-binaries/releases/download/jdk$JVM_VERSION/$JVM_TARFILE
 +# Instead of using OpenJDK, pull in GraalVM.
 +ENV GRAALVM_VERSION 19.3.0
-+ENV GRAALVM_TARFILE graalvm-ce-java8-linux-amd64-$GRAALVM_VERSION.tar.gz
++ENV GRAALVM_TARFILE graalvm-ee-java8-linux-amd64-$GRAALVM_VERSION.tar.gz
  
 -RUN curl -L $JVM_URL > /tmp/$JVM_TARFILE
 +COPY $GRAALVM_TARFILE /tmp/$GRAALVM_TARFILE
@@ -25,7 +25,7 @@ index 43a7be0b4..e905c9ee6 100644
 +    rm -f /tmp/$GRAALVM_TARFILE
  
 -ENV JAVA_HOME /opt/jdk$JVM_VERSION
-+ENV JAVA_HOME /opt/graalvm-ce-java8-$GRAALVM_VERSION
++ENV JAVA_HOME /opt/graalvm-ee-java8-$GRAALVM_VERSION
  ENV PATH $JAVA_HOME/bin:$PATH
  # Store the new PATH in /etc/environment, so that it is not overriden by /etc/profile.
  RUN echo "PATH=$PATH" >> /etc/environment
